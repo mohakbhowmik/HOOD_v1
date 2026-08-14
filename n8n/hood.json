@@ -1,0 +1,64 @@
+{
+  "name": "HOOD_v1",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -336,
+        0
+      ],
+      "id": "065aeae1-3c93-48d2-9843-ffa073a253c2",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n    b.id, \n    b.name, \n    b.canonical_domain, \n    e.page_title, \n    e.description, \n    e.public_email, \n    e.phone, \n    p.text AS website_content\nFROM businesses b\nJOIN extracted_data e ON b.id = e.business_id\nJOIN pages p ON b.id = p.business_id\nWHERE b.status = 'crawled' \n  AND e.public_email IS NOT NULL\nLIMIT 10;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        -160,
+        0
+      ],
+      "id": "ff1c9ba0-2a67-4e42-b255-d295ecdae48e",
+      "name": "Execute a SQL query",
+      "credentials": {
+        "postgres": {
+          "id": "cinQtWjyrnpW5iBR",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "7b7d5786-e002-4907-9c0b-6369d674432d",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "4c216138c329589b75cd6fa8f22fb73fbe2333bd7d3cf5f0a58776b200d7c28c"
+  },
+  "nodeGroups": [],
+  "id": "LIWmSjEFABGDfYVe",
+  "tags": []
+}

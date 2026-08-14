@@ -20,12 +20,23 @@ EMAIL_PATTERN = re.compile(
     r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}"
 )
 
+# Catches unrendered client-side template syntax like {{agentDetails.phone}}
+# or ${phone}. Some site builders inject the real contact value via
+# JavaScript after page load - since V1 only fetches static HTML (no
+# browser), what we see is the literal placeholder, not real data. A
+# genuine phone/email never contains { or }, so this is a safe filter.
+TEMPLATE_PLACEHOLDER_PATTERN = re.compile(r"[{}]")
+
 # Domains that show up in scraped text but are never a real business
 # contact email - platform boilerplate/tracking noise, not a signal.
 EMAIL_DOMAIN_BLOCKLIST = {
     "example.com", "yourdomain.com", "sentry.io", "wixpress.com",
     "godaddy.com", "schema.org",
 }
+
+
+def is_template_placeholder(value: str) -> bool:
+    return bool(TEMPLATE_PLACEHOLDER_PATTERN.search(value))
 
 
 @dataclass
@@ -71,6 +82,8 @@ def extract_from_pages(pages) -> ExtractedFields:
     for page in pages:
         if email is None and page.mailto_emails:
             for candidate in page.mailto_emails.split("|"):
+                if is_template_placeholder(candidate):
+                    continue
                 domain = candidate.split("@")[-1].lower()
                 if domain not in EMAIL_DOMAIN_BLOCKLIST:
                     email = candidate
@@ -78,17 +91,22 @@ def extract_from_pages(pages) -> ExtractedFields:
                     break
 
         if phone is None and page.tel_hrefs:
-            phone = page.tel_hrefs.split("|")[0]
-            phone_source = "href"
+            for candidate in page.tel_hrefs.split("|"):
+                if not is_template_placeholder(candidate):
+                    phone = candidate
+                    phone_source = "href"
+                    break
 
         if page.text is not None:
             if phone is None:
-                phone = find_phone(page.text)
-                if phone is not None:
+                found = find_phone(page.text)
+                if found is not None:
+                    phone = found
                     phone_source = "text_regex"
             if email is None:
-                email = find_email(page.text)
-                if email is not None:
+                found = find_email(page.text)
+                if found is not None:
+                    email = found
                     email_source = "text_regex"
 
         if page_title is None and page.page_title:

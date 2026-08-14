@@ -25,6 +25,7 @@ from sqlalchemy import (
     insert,
     update,
 )
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 metadata = MetaData()
 
@@ -60,13 +61,20 @@ candidates = Table(
 )
 
 # One row per successful crawl of a business's homepage.
+# Current extracted state per business - NOT a log. Re-running extraction
+# overwrites the row for that business (unique constraint below). Unlike
+# `pages`/`candidates`, there's no value in keeping stale versions of a
+# phone number around.
 extracted_data = Table(
     "extracted_data",
     metadata,
     Column("id", Integer, primary_key=True),
-    Column("business_id", Integer, ForeignKey("businesses.id"), nullable=False),
+    Column("business_id", Integer, ForeignKey("businesses.id"), nullable=False, unique=True),
     Column("phone", String, nullable=True),
     Column("public_email", String, nullable=True),
+    Column("phone_source", String, nullable=True),   # 'href' | 'text_regex'
+    Column("email_source", String, nullable=True),   # 'href' | 'text_regex'
+    Column("page_title", String, nullable=True),
     Column("description", Text, nullable=True),
     Column("extracted_at", TIMESTAMP(timezone=True), server_default=func.now()),
 )
@@ -83,6 +91,10 @@ pages = Table(
     Column("url", String, nullable=False),
     Column("status_code", Integer, nullable=True),
     Column("text", Text, nullable=True),
+    Column("page_title", String, nullable=True),
+    Column("meta_description", Text, nullable=True),
+    Column("mailto_emails", Text, nullable=True),  # pipe-separated
+    Column("tel_hrefs", Text, nullable=True),        # pipe-separated
     Column("error", Text, nullable=True),
     Column("fetched_at", TIMESTAMP(timezone=True), server_default=func.now()),
 )
@@ -168,6 +180,10 @@ def save_pages(engine, business_id: int, page_results) -> None:
                     url=page.url,
                     status_code=page.status_code,
                     text=page.text,
+                    page_title=page.page_title,
+                    meta_description=page.meta_description,
+                    mailto_emails="|".join(page.mailto_emails) or None,
+                    tel_hrefs="|".join(page.tel_hrefs) or None,
                     error=page.error,
                 )
             )
@@ -195,3 +211,61 @@ def mark_business_failed(engine, business_id: int, status: str, error: str) -> N
                 last_error=error,
             )
         )
+
+
+def get_crawled_businesses(engine):
+    """Returns rows (id, canonical_domain, name) for businesses ready to extract from."""
+    with engine.begin() as conn:
+        query = select(
+            businesses.c.id, businesses.c.canonical_domain, businesses.c.name
+        ).where(businesses.c.status == "crawled")
+        return conn.execute(query).fetchall()
+
+
+def get_pages_for_business(engine, business_id: int):
+    """
+    Returns saved pages for a business, homepage first. Ordering by id
+    works because save_pages() inserts them in fetch order (homepage,
+    then followed links) and each business is only crawled once in V1.
+    """
+    with engine.begin() as conn:
+        query = (
+            select(
+                pages.c.text, pages.c.page_title, pages.c.meta_description,
+                pages.c.mailto_emails, pages.c.tel_hrefs,
+            )
+            .where(pages.c.business_id == business_id)
+            .order_by(pages.c.id.asc())
+        )
+        return conn.execute(query).fetchall()
+
+
+def upsert_extracted_data(
+    engine, business_id: int, phone: str | None, email: str | None,
+    page_title: str | None, description: str | None,
+    phone_source: str | None = None, email_source: str | None = None,
+) -> None:
+    """Insert or overwrite the extracted fields for this business."""
+    stmt = pg_insert(extracted_data).values(
+        business_id=business_id,
+        phone=phone,
+        public_email=email,
+        phone_source=phone_source,
+        email_source=email_source,
+        page_title=page_title,
+        description=description,
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=[extracted_data.c.business_id],
+        set_={
+            "phone": stmt.excluded.phone,
+            "public_email": stmt.excluded.public_email,
+            "phone_source": stmt.excluded.phone_source,
+            "email_source": stmt.excluded.email_source,
+            "page_title": stmt.excluded.page_title,
+            "description": stmt.excluded.description,
+            "extracted_at": func.now(),
+        },
+    )
+    with engine.begin() as conn:
+        conn.execute(stmt)

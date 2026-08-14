@@ -38,6 +38,10 @@ class PageResult:
     status_code: int | None
     text: str | None
     links_found: list[str] = field(default_factory=list)
+    page_title: str | None = None
+    meta_description: str | None = None
+    mailto_emails: list[str] = field(default_factory=list)
+    tel_hrefs: list[str] = field(default_factory=list)
     error: str | None = None
     failure_type: str | None = None  # 'transient' | 'permanent' | None (None = success)
 
@@ -78,13 +82,31 @@ def fetch_page(url: str) -> PageResult:
         )
 
     soup = BeautifulSoup(response.text, "html.parser")
+
+    page_title = soup.title.string.strip() if soup.title and soup.title.string else None
+
+    meta_tag = soup.find("meta", attrs={"name": "description"}) or soup.find(
+        "meta", attrs={"property": "og:description"}
+    )
+    meta_description = meta_tag["content"].strip() if meta_tag and meta_tag.get("content") else None
+
     for tag in soup(["script", "style", "noscript"]):
         tag.decompose()
     readable_text = " ".join(soup.get_text(separator=" ").split())
 
     links = extract_internal_links(soup, base_url=url)
+    mailto_emails, tel_hrefs = extract_contact_links(soup)
 
-    return PageResult(url=url, status_code=response.status_code, text=readable_text, links_found=links)
+    return PageResult(
+        url=url,
+        status_code=response.status_code,
+        text=readable_text,
+        links_found=links,
+        page_title=page_title,
+        meta_description=meta_description,
+        mailto_emails=mailto_emails,
+        tel_hrefs=tel_hrefs,
+    )
 
 
 def extract_internal_links(soup: BeautifulSoup, base_url: str) -> list[str]:
@@ -97,6 +119,27 @@ def extract_internal_links(soup: BeautifulSoup, base_url: str) -> list[str]:
         if parsed.netloc == base_domain and parsed.scheme in ("http", "https"):
             links.add(absolute.split("#")[0])
     return list(links)
+
+
+def extract_contact_links(soup: BeautifulSoup) -> tuple[list[str], list[str]]:
+    """
+    Pulls mailto:/tel: links straight from anchor hrefs. This is more
+    reliable than regex-matching visible page text, which can be
+    decorated in ways that break simple pattern matching (markdown-style
+    link text, icons-as-text, obfuscation tricks some templates use).
+    """
+    emails, phones = [], []
+    for a in soup.find_all("a", href=True):
+        href = a["href"].strip()
+        if href.lower().startswith("mailto:"):
+            address = href.split(":", 1)[1].split("?")[0].strip()
+            if address:
+                emails.append(address)
+        elif href.lower().startswith("tel:"):
+            number = href.split(":", 1)[1].strip()
+            if number:
+                phones.append(number)
+    return emails, phones
 
 
 def pick_relevant_links(links: list[str], limit: int = MAX_FOLLOWED_LINKS) -> list[str]:

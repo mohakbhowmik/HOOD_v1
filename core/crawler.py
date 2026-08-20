@@ -29,7 +29,10 @@ MIN_BODY_LENGTH = 500  # below this, treat the page as not useful
 MAX_FOLLOWED_LINKS = 4  # crawl budget: homepage + at most this many more pages
 DELAY_BETWEEN_REQUESTS_SECONDS = 1  # politeness delay within one business's pages
 
-RELEVANT_LINK_KEYWORDS = ["about", "contact", "service", "team", "book", "pricing"]
+RELEVANT_LINK_KEYWORDS = [
+    "about", "contact", "service", "team", "book", "pricing", 
+    "staff", "leadership", "reach", "get-in-touch"
+]
 
 
 @dataclass

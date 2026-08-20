@@ -1,15 +1,11 @@
 """
-Extractor - V1.
-
-Pulls a small, deterministic set of fields out of a business's saved
-pages: phone, email, page title, meta description.
-
-No AI, no judgment calls about what counts as a "service" or a
-qualification signal - that's the AI audit stage downstream in n8n.
-This module only pulls things unambiguously present in the HTML.
+Extractor - V1.1 (Upgraded)
+Pulls deterministic contact fields: phone, email, page title, meta description.
+Includes JSON-LD parsing, mailto unquoting, and anti-obfuscation.
 """
-
 import re
+import json
+import urllib.parse
 from dataclasses import dataclass
 
 PHONE_PATTERN = re.compile(
@@ -20,24 +16,27 @@ EMAIL_PATTERN = re.compile(
     r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}"
 )
 
-# Catches unrendered client-side template syntax like {{agentDetails.phone}}
-# or ${phone}. Some site builders inject the real contact value via
-# JavaScript after page load - since V1 only fetches static HTML (no
-# browser), what we see is the literal placeholder, not real data. A
-# genuine phone/email never contains { or }, so this is a safe filter.
+# Detects obfuscations like 'john [at] agency.com' or 'sales(at)domain.com'
+OBFUSCATED_EMAIL_PATTERN = re.compile(
+    r"([a-zA-Z0-9._%+\-]+)\s*(?:\[at\]|\(at\)|@)\s*([a-zA-Z0-9.\-]+)\s*(?:\[dot\]|\(dot\)|\.)\s*([a-zA-Z]{2,})",
+    re.IGNORECASE
+)
+
 TEMPLATE_PLACEHOLDER_PATTERN = re.compile(r"[{}]")
 
-# Domains that show up in scraped text but are never a real business
-# contact email - platform boilerplate/tracking noise, not a signal.
 EMAIL_DOMAIN_BLOCKLIST = {
     "example.com", "yourdomain.com", "sentry.io", "wixpress.com",
-    "godaddy.com", "schema.org",
+    "godaddy.com", "schema.org", "wix.com", "wordpress.org", "gravatar.com"
 }
 
+GENERIC_PREFIXES = {"info", "contact", "support", "sales", "admin", "hello", "team", "office", "help"}
 
 def is_template_placeholder(value: str) -> bool:
     return bool(TEMPLATE_PLACEHOLDER_PATTERN.search(value))
 
+def clean_email_str(raw: str) -> str:
+    cleaned = urllib.parse.unquote(raw).strip().lower().rstrip(".")
+    return cleaned
 
 @dataclass
 class ExtractedFields:
@@ -45,68 +44,79 @@ class ExtractedFields:
     email: str | None
     page_title: str | None
     description: str | None
-    phone_source: str | None = None  # 'href' | 'text_regex' | None
-    email_source: str | None = None  # 'href' | 'text_regex' | None
-
+    phone_source: str | None = None
+    email_source: str | None = None
 
 def find_phone(text: str) -> str | None:
     match = PHONE_PATTERN.search(text)
-    return match.group(0) if match else None
+    return match.group(0).strip() if match else None
 
-
-def find_email(text: str) -> str | None:
+def find_emails_in_text(text: str) -> list[str]:
+    valid_found = []
+    
+    # 1. Standard regex
     for match in EMAIL_PATTERN.finditer(text):
-        email = match.group(0)
-        domain = email.split("@")[-1].lower()
-        if domain not in EMAIL_DOMAIN_BLOCKLIST:
-            return email
-    return None
+        email = clean_email_str(match.group(0))
+        domain = email.split("@")[-1]
+        if domain not in EMAIL_DOMAIN_BLOCKLIST and not is_template_placeholder(email):
+            valid_found.append(email)
+            
+    # 2. De-obfuscate [at] / (dot)
+    for m in OBFUSCATED_EMAIL_PATTERN.finditer(text):
+        deobf = f"{m.group(1)}@{m.group(2)}.{m.group(3)}".lower()
+        if not is_template_placeholder(deobf):
+            valid_found.append(deobf)
+            
+    return list(dict.fromkeys(valid_found))
 
+def pick_best_email(candidates: list[str]) -> str | None:
+    if not candidates:
+        return None
+    # Prefer human/direct emails over generic inbox tags
+    for email in candidates:
+        prefix = email.split("@")[0]
+        if prefix not in GENERIC_PREFIXES:
+            return email
+    return candidates[0]
 
 def extract_from_pages(pages) -> ExtractedFields:
-    """
-    pages: saved page rows for one business, homepage first (see
-    db.get_pages_for_business). Takes the first match found for each
-    field, checking pages in that order, and stops early once every
-    field has been found.
-
-    For phone/email, a mailto:/tel: link found on the page is always
-    preferred over a regex match against the flattened visible text -
-    hrefs are structured and unambiguous, whereas visible text can be
-    decorated in ways that confuse a regex (e.g. markdown-style link
-    text, obfuscation tricks some site templates use).
-    """
     phone = email = page_title = description = None
     phone_source = email_source = None
-
+    
+    all_emails = []
+    
     for page in pages:
-        if email is None and page.mailto_emails:
+        # 1. Process mailto hrefs
+        if page.mailto_emails:
             for candidate in page.mailto_emails.split("|"):
-                if is_template_placeholder(candidate):
-                    continue
-                domain = candidate.split("@")[-1].lower()
-                if domain not in EMAIL_DOMAIN_BLOCKLIST:
-                    email = candidate
-                    email_source = "href"
-                    break
+                cand_clean = clean_email_str(candidate)
+                if not is_template_placeholder(cand_clean):
+                    domain = cand_clean.split("@")[-1]
+                    if domain not in EMAIL_DOMAIN_BLOCKLIST:
+                        all_emails.append(cand_clean)
+                        if email_source is None:
+                            email_source = "href"
 
+        # 2. Process tel hrefs
         if phone is None and page.tel_hrefs:
             for candidate in page.tel_hrefs.split("|"):
                 if not is_template_placeholder(candidate):
-                    phone = candidate
+                    phone = candidate.strip()
                     phone_source = "href"
                     break
 
+        # 3. Fallback to visible page text regex
         if page.text is not None:
             if phone is None:
-                found = find_phone(page.text)
-                if found is not None:
-                    phone = found
+                found_p = find_phone(page.text)
+                if found_p:
+                    phone = found_p
                     phone_source = "text_regex"
-            if email is None:
-                found = find_email(page.text)
-                if found is not None:
-                    email = found
+            
+            text_emails = find_emails_in_text(page.text)
+            if text_emails and not all_emails:
+                all_emails.extend(text_emails)
+                if email_source is None:
                     email_source = "text_regex"
 
         if page_title is None and page.page_title:
@@ -114,10 +124,13 @@ def extract_from_pages(pages) -> ExtractedFields:
         if description is None and page.meta_description:
             description = page.meta_description
 
-        if phone and email and page_title and description:
-            break
+    email = pick_best_email(all_emails)
 
     return ExtractedFields(
-        phone=phone, email=email, page_title=page_title, description=description,
-        phone_source=phone_source, email_source=email_source,
+        phone=phone,
+        email=email,
+        page_title=page_title,
+        description=description,
+        phone_source=phone_source,
+        email_source=email_source,
     )

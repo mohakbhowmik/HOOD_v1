@@ -43,7 +43,16 @@ class RawCandidate:
 
 
 def generate_queries(target) -> list[str]:
-    """Target(industry='real estate', locations=['Miami']) -> list of query strings."""
+    """
+    Returns the list of search phrases to run.
+
+    If target.queries was explicitly set (this is how n8n's AI-generated
+    keyword expansion arrives), use it as-is. Otherwise fall back to
+    basic template expansion - useful for manual/local runs without n8n.
+    """
+    if target.queries:
+        return target.queries
+
     queries = []
     for location in target.locations:
         for template in QUERY_TEMPLATES:

@@ -1,18 +1,16 @@
 """
 HOOD entry point - crawl stage.
 
-Run this AFTER run_discovery.py has populated `businesses` with some
-status='pending' rows.
+Can be run two ways:
+  1. Standalone: `python run_crawl.py` - crawls whatever is pending.
+  2. Imported: run_pipeline.py calls crawl_pending_businesses() directly
+     right after discovery, in the same process/run.
 
 For every pending business:
   1. fetch its homepage (https, falling back to http once if needed)
   2. if that succeeds, follow a small number of relevant internal pages
   3. save every page fetched (success or failure) to `pages`
   4. update the business's status based on the homepage result
-
-No structured extraction (phone/email/description) happens here - this
-step only proves we can reliably retrieve pages. That's core/extractor.py,
-next.
 """
 
 import time
@@ -31,10 +29,8 @@ from core.crawler import crawl_business
 DELAY_BETWEEN_BUSINESSES_SECONDS = 1
 
 
-def main():
-    load_dotenv()
-    engine = get_engine()
-
+def crawl_pending_businesses(engine) -> None:
+    """Crawls every business with status='pending'. Prints a summary."""
     pending = get_pending_businesses(engine)
     print(f"{len(pending)} businesses pending crawl")
 
@@ -69,10 +65,16 @@ def main():
         time.sleep(DELAY_BETWEEN_BUSINESSES_SECONDS)
 
     print()
-    print("Crawl run complete.")
+    print("Crawl complete.")
     print(f"  Crawled successfully:      {crawled_ok}")
     print(f"  Failed (will retry later): {failed_retryable}")
     print(f"  Failed (permanent):        {failed_permanent}")
+
+
+def main():
+    load_dotenv()
+    engine = get_engine()
+    crawl_pending_businesses(engine)
 
 
 if __name__ == "__main__":

@@ -24,6 +24,7 @@ from sqlalchemy import (
     select,
     insert,
     update,
+    text,
 )
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -99,23 +100,102 @@ pages = Table(
     Column("fetched_at", TIMESTAMP(timezone=True), server_default=func.now()),
 )
 
+# One row per discovery run. Lets n8n know which industry/location/date
+# a business came from, for naming sheets and for scoring context.
+runs = Table(
+    "runs",
+    metadata,
+    Column("run_id", String, primary_key=True),
+    Column("industry", String, nullable=False),
+    Column("locations", String, nullable=False),  # comma-joined, e.g. "Miami"
+    Column("target_limit", Integer, nullable=True),
+    Column("started_at", TIMESTAMP(timezone=True), server_default=func.now()),
+)
+
+# Tracks whether a business has been scored and exported to a sheet yet.
+# This is what makes the n8n workflow safe to run repeatedly - once a
+# business has a row here, prospects_for_scoring (a SQL view, created
+# separately - see init_db) stops returning it, so no duplicate scoring
+# or outreach.
+outreach_state = Table(
+    "outreach_state",
+    metadata,
+    Column("business_id", Integer, ForeignKey("businesses.id"), primary_key=True),
+    Column("fit_score", Integer, nullable=True),
+    Column("score_reasoning", Text, nullable=True),
+    Column("scored_at", TIMESTAMP(timezone=True), nullable=True),
+    Column("sheet_name", String, nullable=True),
+    Column("exported_at", TIMESTAMP(timezone=True), nullable=True),
+)
+
 
 def get_engine():
     """
     Creates a SQLAlchemy engine from the DATABASE_URL environment variable.
     Call this once per process and reuse the engine - don't create a new
     one per function call.
+
+    A blank or missing DATABASE_URL should not crash the local pipeline.
+    We intentionally fall back to the project Docker database so n8n can
+    run without depending on a working .env parser while we're validating
+    the end-to-end flow.
     """
-    database_url = os.environ["DATABASE_URL"]
+    database_url = os.getenv("DATABASE_URL") or "postgresql+psycopg2://hood:changeme@localhost:5432/hood"
     return create_engine(database_url)
 
 
 def init_db(engine) -> None:
     """
-    Creates all tables if they don't already exist. Safe to call every
-    time the app starts - it won't touch tables that already exist.
+    Creates all tables if they don't already exist, plus the
+    prospects_for_scoring view n8n reads from. Safe to call every time
+    the app starts.
     """
     metadata.create_all(engine)
+
+    with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE OR REPLACE VIEW prospects_for_scoring AS
+            SELECT
+                b.id AS business_id,
+                b.canonical_domain,
+                b.name AS business_name,
+                ed.phone,
+                ed.public_email,
+                ed.phone_source,
+                ed.email_source,
+                ed.page_title,
+                ed.description,
+                r.run_id,
+                r.industry,
+                r.locations,
+                r.started_at AS run_started_at
+            FROM businesses b
+            JOIN extracted_data ed ON ed.business_id = b.id
+            JOIN LATERAL (
+                SELECT c.run_id
+                FROM candidates c
+                WHERE c.business_id = b.id
+                ORDER BY c.discovered_at ASC
+                LIMIT 1
+            ) first_candidate ON true
+            JOIN runs r ON r.run_id = first_candidate.run_id
+            LEFT JOIN outreach_state os ON os.business_id = b.id
+            WHERE b.status = 'crawled'
+              AND os.business_id IS NULL
+        """))
+
+
+def create_run(engine, run_id: str, industry: str, locations: list[str], target_limit: int) -> None:
+    """Records metadata for a discovery run - what n8n uses to name sheets."""
+    with engine.begin() as conn:
+        conn.execute(
+            insert(runs).values(
+                run_id=run_id,
+                industry=industry,
+                locations=", ".join(locations),
+                target_limit=target_limit,
+            )
+        )
 
 
 def upsert_business(engine, domain: str, name: str | None) -> int:

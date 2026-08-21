@@ -1,8 +1,10 @@
 """
 HOOD entry point - extraction stage.
 
-Run this AFTER run_crawl.py has populated `pages` for some businesses
-(status='crawled').
+Can be run two ways:
+  1. Standalone: `python run_extract.py` - extracts from whatever is crawled.
+  2. Imported: run_pipeline.py calls extract_crawled_businesses() directly
+     right after crawling, in the same process/run.
 
 For every crawled business:
   1. load its saved pages
@@ -19,10 +21,8 @@ from core.db import get_engine, get_crawled_businesses, get_pages_for_business, 
 from core.extractor import extract_from_pages
 
 
-def main():
-    load_dotenv()
-    engine = get_engine()
-
+def extract_crawled_businesses(engine) -> None:
+    """Extracts fields for every business with status='crawled'. Prints a summary."""
     crawled = get_crawled_businesses(engine)
     print(f"{len(crawled)} crawled businesses to extract from")
 
@@ -45,12 +45,18 @@ def main():
         print(f"  {business.canonical_domain}: phone={fields.phone!r} email={fields.email!r}")
 
     print()
-    print("Extraction run complete.")
+    print("Extraction complete.")
     print(f"  Businesses processed: {len(crawled)}")
     print(f"  Phone found:          {found_phone}")
     print(f"  Email found:          {found_email}")
     print(f"  Page title found:     {found_title}")
     print(f"  Description found:    {found_description}")
+
+
+def main():
+    load_dotenv()
+    engine = get_engine()
+    extract_crawled_businesses(engine)
 
 
 if __name__ == "__main__":

@@ -10,6 +10,11 @@ services:
       - "5432:5432"
     volumes:
       - hood_pgdata:/var/lib/postgresql/data
+    healthcheck:
+       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+       interval: 2s
+       timeout: 3s
+       retries: 10
 
 volumes:
   hood_pgdata:

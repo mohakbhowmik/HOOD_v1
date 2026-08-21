@@ -1,18 +1,19 @@
 """
-HOOD entry point - V0.
+HOOD entry point - discovery stage.
 
-Pipeline so far:
-  1. load target config
-  2. connect to Postgres, ensure schema exists
-  3. generate queries from the target
-  4. run each query against Google Places (our one V0 discovery source)
-  5. normalize each result's URL to a canonical domain
-  6. upsert into `businesses` (this is where dedup happens)
-  7. record the discovery in `candidates`
-  8. print a summary
+Can be run two ways:
+  1. Standalone: `python run_discovery.py` - loads targets/miami_real_estate.json,
+     uses template query expansion. Useful for manual/local testing.
+  2. Imported: run_pipeline.py calls discover_businesses() directly with
+     a Target built from n8n-supplied CLI args (industry/locations/queries).
 
-Crawling and extraction are NOT wired in yet - businesses just sit at
-status='pending' after this runs. That's next.
+Pipeline:
+  1. generate queries from the target (template expansion, or explicit
+     target.queries if n8n's AI already supplied them)
+  2. run each query against Google Places
+  3. normalize each result's URL to a canonical domain
+  4. upsert into `businesses` (dedup happens here)
+  5. record the discovery in `candidates`
 """
 
 from datetime import datetime, timezone
@@ -20,22 +21,14 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 
 from core.config import Target
-from core.db import get_engine, init_db, upsert_business, insert_candidate
+from core.db import get_engine, init_db, upsert_business, insert_candidate, create_run
 from core.discovery import generate_queries, discover
 from core.urls import canonical_domain
 
 
-def main():
-    load_dotenv()
-
-    target = Target.from_file("targets/miami_real_estate.json")
-    print(f"Loaded target: industry={target.industry!r}, "
-          f"locations={target.locations}, limit={target.limit}")
-
-    engine = get_engine()
-    init_db(engine)
-
-    run_id = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+def discover_businesses(engine, target: Target, run_id: str) -> None:
+    """Runs the full discovery stage for one target. Prints a summary."""
+    create_run(engine, run_id, target.industry, target.locations, target.limit)
     queries = generate_queries(target)
     print(f"Generated {len(queries)} queries for run_id={run_id}")
 
@@ -59,10 +52,24 @@ def main():
             seen_domains.add(domain)
 
     print()
-    print("Run complete.")
+    print("Discovery complete.")
     print(f"  Raw candidates returned by Places API: {total_raw}")
     print(f"  Skipped (no usable website URL):       {skipped_no_url}")
     print(f"  Unique businesses (deduped by domain): {len(seen_domains)}")
+
+
+def main():
+    load_dotenv()
+
+    target = Target.from_file("targets/miami_real_estate.json")
+    print(f"Loaded target: industry={target.industry!r}, "
+          f"locations={target.locations}, limit={target.limit}")
+
+    engine = get_engine()
+    init_db(engine)
+
+    run_id = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    discover_businesses(engine, target, run_id)
 
 
 if __name__ == "__main__":

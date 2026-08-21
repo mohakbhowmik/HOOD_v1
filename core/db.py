@@ -153,8 +153,9 @@ def init_db(engine) -> None:
     metadata.create_all(engine)
 
     with engine.begin() as conn:
+        conn.execute(text("DROP VIEW IF EXISTS prospects_for_scoring;"))
         conn.execute(text("""
-            CREATE OR REPLACE VIEW prospects_for_scoring AS
+            CREATE VIEW prospects_for_scoring AS
             SELECT
                 b.id AS business_id,
                 b.canonical_domain,

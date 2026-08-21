@@ -22,12 +22,13 @@ cities in one run, but the intended n8n flow is one city per submission.
 """
 
 import argparse
+import json
 from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 
 from core.config import Target
-from core.db import get_engine, init_db
+from core.db import get_engine, init_db, get_crawled_businesses
 from run_discovery import discover_businesses
 from run_crawl import crawl_pending_businesses
 from run_extract import extract_crawled_businesses
@@ -71,6 +72,19 @@ def main():
 
     print(f"\nPipeline complete. run_id={run_id}")
     print("Query `SELECT * FROM prospects_for_scoring;` in Postgres to see results ready for n8n.")
+
+    businesses_crawled = len(get_crawled_businesses(engine))
+
+    # Final machine-readable status payload. Keep this as the last line so
+    # downstream n8n/automation can parse it without scraping the logs.
+    payload = {
+        "run_id": run_id,
+        "industry": target.industry,
+        "locations": target.locations,
+        "businesses_crawled": businesses_crawled,
+        "status": "completed",
+    }
+    print(json.dumps(payload, separators=(",", ":")))
 
 
 if __name__ == "__main__":

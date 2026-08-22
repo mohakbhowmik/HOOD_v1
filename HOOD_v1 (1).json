@@ -1,0 +1,1106 @@
+{
+  "name": "HOOD_v1",
+  "nodes": [
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n    business_id,\n    business_name,\n    run_id,\n    industry,\n    locations\nFROM prospects_for_scoring\nWHERE run_id = '20260822-100101';",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        928,
+        192
+      ],
+      "id": "ff1c9ba0-2a67-4e42-b255-d295ecdae48e",
+      "name": "Execute a SQL query",
+      "credentials": {
+        "postgres": {
+          "id": "cinQtWjyrnpW5iBR",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "formTitle": "HOOD Lead Prospector",
+        "formDescription": "Trigger pipeline for discovery, crawl, and qualification",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Industry",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Location",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Limit",
+              "defaultValue": "10",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.6,
+      "position": [
+        -160,
+        192
+      ],
+      "id": "d0c35afb-e51c-4f64-99fc-de7237c90322",
+      "name": "On form submission",
+      "webhookId": "537e7fa0-8ecf-4564-9929-46badf117320"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-3.5-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-3.5-flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=You are an expert B2B search strategist. Your task is to generate high-precision local search queries for Google Places discovery.\n\nTarget Industry: {{ $('On form submission').item.json.Industry }}\nTarget Metro/Location: {{ $('On form submission').item.json.Location }}\nTarget Lead Limit: {{ $('On form submission').item.json.Limit }}\n\nINSTRUCTIONS:\n1. Dynamically calculate the query count based on Target Lead Limit:\n   - If Limit <= 10: Generate EXACTLY 2 to 3 search phrases.\n   - If Limit is between 11 and 50: Generate EXACTLY 5 to 8 search phrases.\n   - If Limit is between 51 and 100: Generate EXACTLY 10 to 15 search phrases.\n   - If Limit > 100: Generate 20 to 30 search phrases.\n\n2. Query rules:\n   - Mix specific sub-niches, commercial districts, neighborhoods, and business intent terms.\n   - Ensure every phrase is tailored to the target location.\n\n3. Output rules:\n   - Return ONLY the search phrases separated by a single pipe symbol (|).\n   - Do NOT include numbering, bullet points, introductory text, explanations, or quotes.\n\nExample Output format:\nluxury apartment leasing Brickell Miami|corporate housing provider Edgewater Miami|student rentals Coral Gables"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        1568,
+        608
+      ],
+      "id": "4f1aad57-aef4-486b-b173-47f11bc7d9ed",
+      "name": "Message a model1",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "dPK5hMkpaRTJqjde",
+          "name": "Google Gemini(PaLM) Api account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8000/run-pipeline",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "industry",
+              "value": "={{ $('On form submission').item.json.Industry }}"
+            },
+            {
+              "name": "location",
+              "value": "={{ $('On form submission').item.json.Location }}"
+            },
+            {
+              "name": "limit",
+              "value": "={{ $('On form submission').item.json.Limit }}"
+            },
+            {
+              "name": "queries",
+              "value": "={{ $json.content.parts[0].text }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 6000000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1296,
+        -64
+      ],
+      "id": "843c6cea-ee28-4fbf-989c-01bf38da0997",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "batchSize": 10,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        3152,
+        128
+      ],
+      "id": "64c8cf7d-54a8-4375-b4b4-4299b909a4e0",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-3-flash-preview",
+          "mode": "list",
+          "cachedResultName": "models/gemini-3-flash-preview"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=You are a senior B2B consultant evaluating local businesses for web overhaul, CRM/booking automation, and AI concierge opportunities.\n\nData:\n{{ $json.batch_json }}\n\nTASK:\nEvaluate EVERY business present in the JSON array above. Return a clean, valid JSON array containing one object for each evaluated business with its matching business_id.\n\nOUTPUT FORMAT (JSON array only, no markdown code blocks):\n[\n  {\n    \"business_id\": 52,\n    \"fit_score\": 8,\n    \"opportunity_type\": \"Automation/Chatbot\",\n    \"pitch\": \"2-sentence specific gap observation based on snippet.\",\n    \"action\": \"Outreach\"\n  }\n]"
+            }
+          ]
+        },
+        "jsonOutput": true,
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        3584,
+        304
+      ],
+      "id": "a77813cc-5c3f-4152-ac71-bd27ff202880",
+      "name": "Message a model3",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "dPK5hMkpaRTJqjde",
+          "name": "Google Gemini(PaLM) Api account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all().map(i => ({\n  business_id: i.json.business_id,\n  name: i.json.business_name,\n  domain: i.json.canonical_domain,\n  phone: i.json.phone,\n  email: i.json.public_email,\n  title: i.json.page_title,\n  snippet: i.json.website_content\n}));\n\nreturn [{\n  json: {\n    batch_json: JSON.stringify(items),\n    count: items.length\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3232,
+        352
+      ],
+      "id": "534635eb-f53f-472e-b247-1088845f2300",
+      "name": "Pack 50 items"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. Extract raw response text from Gemini\nconst rawText = $input.first().json.content?.parts?.[0]?.text || $input.first().json.text || \"[]\";\n\n// 2. Clean out any potential markdown code blocks\nconst cleaned = rawText.replace(/```json/g, '').replace(/```/g, '').trim();\n\nlet evaluations = [];\ntry {\n  evaluations = JSON.parse(cleaned);\n  // Ensure we are working with an array\n  if (!Array.isArray(evaluations)) {\n    evaluations = [evaluations];\n  }\n} catch (e) {\n  evaluations = [];\n}\n\n// 3. Get the original prospect records from the current batch loop\nconst originalBatch = $('Loop Over Items').all();\n\n// 4. Match evaluation data back to the full database prospect rows\nreturn evaluations.map(evalItem => {\n  const original = originalBatch.find(item => item.json.business_id === evalItem.business_id)?.json || {};\n  \n  return {\n    json: {\n      business_id: evalItem.business_id || original.business_id,\n      business_name: original.business_name || \"N/A\",\n      canonical_domain: original.canonical_domain || \"N/A\",\n      phone: original.phone || \"N/A\",\n      public_email: original.public_email || \"N/A\",\n      industry: original.industry || \"N/A\",\n      locations: original.locations || \"N/A\",\n      page_title: original.page_title || \"N/A\",\n      fit_score: Number(evalItem.fit_score) || 0,\n      opportunity_type: evalItem.opportunity_type || \"None\",\n      pitch: evalItem.pitch || \"N/A\",\n      action: evalItem.action || \"Skip\",\n      run_id: original.run_id || \"N/A\"\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3840,
+        304
+      ],
+      "id": "4d8ee1bc-435f-4144-8205-52cb3b19fe89",
+      "name": "Code in JavaScript2"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "0f9931ab-e846-4dee-b527-ee782afe90a4",
+              "leftValue": "={{ $json.fit_score }}",
+              "rightValue": 6,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        4000,
+        320
+      ],
+      "id": "42ae91ff-e4bd-409e-bfc3-9ae53ec39ac8",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1sZrXqHFraSXMNeMkV7AIwQLnj8I5GIViGd1zibE4TOs",
+          "mode": "list",
+          "cachedResultName": "Verified_High_Fit",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1sZrXqHFraSXMNeMkV7AIwQLnj8I5GIViGd1zibE4TOs/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1sZrXqHFraSXMNeMkV7AIwQLnj8I5GIViGd1zibE4TOs/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Business Name": "={{ $json.business_name }}",
+            "Domain": "={{ $json.canonical_domain }}",
+            "Phone": "={{ $json.phone }}",
+            "Email": "={{ $json.public_email }}",
+            "Industry": "={{ $json.industry }}",
+            "Location": "={{ $json.locations }}",
+            "Fit Score": "={{ $json.fit_score }}",
+            "Opportunity Type": "={{ $json.opportunity_type }}",
+            "Pitch": "={{ $json.pitch }}",
+            "Action": "={{ $json.action }}",
+            "Run ID": "={{ $json.run_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Business Name",
+              "displayName": "Business Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Domain",
+              "displayName": "Domain",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Phone",
+              "displayName": "Phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Email",
+              "displayName": "Email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Industry",
+              "displayName": "Industry",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Location",
+              "displayName": "Location",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Fit Score",
+              "displayName": "Fit Score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Opportunity Type",
+              "displayName": "Opportunity Type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Pitch",
+              "displayName": "Pitch",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Action",
+              "displayName": "Action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Run ID",
+              "displayName": "Run ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        4224,
+        272
+      ],
+      "id": "da806e00-0f40-446f-a15f-5d7fe2ce7153",
+      "name": "Append row in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "eVr1FEqxaBgcQSnK",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "mohak.writes@gmail.com",
+        "subject": "=New Leads Processed: {{ $('On form submission').first().json.Industry }} ({{ $('On form submission').first().json.Location }})",
+        "message": "=<p>The lead generation and scoring pipeline has finished successfully.</p> <p><b>Industry:</b> {{ $('On form submission').first().json.Industry }}<br> <b>Location:</b> {{ $('On form submission').first().json.Location }}</p> <p>Verified high-fit leads have been scored and appended to your Google Sheet.</p>",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        3536,
+        112
+      ],
+      "id": "c3978459-ae3c-46ff-94cc-c50b07899936",
+      "name": "Send a message",
+      "webhookId": "472d5c9e-c1ff-4b0e-b0f4-de96d9d717e5",
+      "executeOnce": true,
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "1DX0lLWTqMtd9pLG",
+          "name": "VerzioStudiogmail"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [
+        3360,
+        112
+      ],
+      "id": "28bd8c32-51f6-4901-9529-fed9bd5463b9",
+      "name": "Limit"
+    },
+    {
+      "parameters": {
+        "resource": "spreadsheet",
+        "title": "=Master_Leads_{{ $('On form submission').first().json.Location }}_{{ $('On form submission').first().json.Industry }}",
+        "sheetsUi": {
+          "sheetValues": [
+            {}
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        2688,
+        128
+      ],
+      "id": "6dfbd522-4f07-43d9-a21e-548534496357",
+      "name": "Create spreadsheet",
+      "executeOnce": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "eVr1FEqxaBgcQSnK",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "move",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $('Create spreadsheet').first().json.spreadsheetId || $('Create spreadsheet').first().json.id }}",
+          "mode": "id"
+        },
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "={{ $('Create Industry Folder').first().json.id }}",
+          "mode": "id"
+        }
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        2848,
+        128
+      ],
+      "id": "ed13b341-96fa-4f94-8853-3b480e9193c4",
+      "name": "Move file",
+      "executeOnce": true,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "BN6RhJhCjDaFSMDx",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "194e305d-b6ea-4691-ba0d-d2fb16e91ea7",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1632,
+        192
+      ],
+      "id": "33d8b1ac-42f4-48bc-a1af-2563ed7c2527",
+      "name": "If1",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "resource": "folder",
+        "name": "={{ $('On form submission').first().json.Location }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "1rebaRzbcuA9MjHBuKpXpt3vC6oN5eMEO",
+          "mode": "list",
+          "cachedResultName": "HOOD_Leads",
+          "cachedResultUrl": "https://drive.google.com/drive/folders/1rebaRzbcuA9MjHBuKpXpt3vC6oN5eMEO"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1760,
+        368
+      ],
+      "id": "7e47f982-3c68-41f7-8fa6-7d79707b8b31",
+      "name": "Create Location folder",
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "BN6RhJhCjDaFSMDx",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "searchMethod": "query",
+        "queryString": "=name = '{{ $('On form submission').first().json.Location }}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false",
+        "limit": 1,
+        "filter": {},
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1472,
+        192
+      ],
+      "id": "9b9329ec-74b6-46b9-ad99-057133c21019",
+      "name": "Search Location",
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "BN6RhJhCjDaFSMDx",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "5883c741-80dc-4867-94ef-8493edb8058e",
+              "leftValue": "={{ !!$json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2256,
+        208
+      ],
+      "id": "cb283561-a7c5-48de-9c35-edca11f08bdd",
+      "name": "If2",
+      "alwaysOutputData": false,
+      "executeOnce": false
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "searchMethod": "query",
+        "queryString": "={{ \"name = '\" + $('On form submission').first().json.Industry + \"' and mimeType = 'application/vnd.google-apps.folder' and trashed = false and '\" + $json.location_folder_id + \"' in parents\" }}",
+        "limit": 1,
+        "filter": {},
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        2032,
+        176
+      ],
+      "id": "9fb4eab4-477c-4e71-946b-66a49aac42ba",
+      "name": "Search Industry Folder",
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "BN6RhJhCjDaFSMDx",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "folder",
+        "name": "={{ $('On form submission').first().json.Industry }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "={{ $if(\n  $('Edit Fields').isExecuted,\n  $('Edit Fields').first().json.location_folder_id,\n  $('Edit Fields1').first().json.location_folder_id\n) }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        2576,
+        336
+      ],
+      "id": "a88ac1f1-51fd-413a-80ae-8ed8a68663f5",
+      "name": "Create Industry Folder",
+      "executeOnce": true,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "BN6RhJhCjDaFSMDx",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f60629ae-bdb6-4d83-bcd5-17a7b3627c09",
+              "name": "location_folder_id",
+              "value": "={{ $json.id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        1824,
+        176
+      ],
+      "id": "d8166296-0b3e-4897-a822-20d4a12c67b9",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "20f4a2f1-8e17-43f1-9c95-4950e22e99d8",
+              "name": "location_folder_id",
+              "value": "={{ $json.id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        1904,
+        368
+      ],
+      "id": "c411b7a6-0bb9-44e1-8ad7-0b2ed010dc09",
+      "name": "Edit Fields1"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "bf1a12e3-6a58-4f64-8764-80cfc09ebfee",
+              "name": "location",
+              "value": "={{ $json.Location }}",
+              "type": "string"
+            },
+            {
+              "id": "483dde81-f064-4bad-bd78-fe5270c91860",
+              "name": "industry",
+              "value": "={{ $json.Industry }}",
+              "type": "string"
+            },
+            {
+              "id": "a1ccf7c5-619f-47d3-96f9-efad2f4ae4bd",
+              "name": "limit",
+              "value": "={{ $json.Limit }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        32,
+        192
+      ],
+      "id": "0f2d9b32-8748-4844-bf58-24a06cbba8f8",
+      "name": "Run Context"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-3.5-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-3.5-flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=You are the search-parameter expansion layer for a lead scraper.\n\nUse the provided form inputs as the source of truth.\n\nLocation: {{ $json.location }}\nIndustry: {{ $json.industry }}\nLimit: {{ $json.limit }}\n\nGenerate useful search keywords and search variations for finding businesses in the specified industry and location.\n\nDo not change, reinterpret, or invent the location, industry, or limit.\n\nReturn valid JSON only in this format:\n{\n  \"location\": \"...\",\n  \"industry\": \"...\",\n  \"limit\": 10,\n  \"search_queries\": [\n    \"...\",\n    \"...\",\n    \"...\"\n  ]\n}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        208,
+        192
+      ],
+      "id": "0d112522-e1e1-47bb-b84b-5bac5da726ba",
+      "name": "Message a model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "dPK5hMkpaRTJqjde",
+          "name": "Google Gemini(PaLM) Api account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8000/run-pipeline",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {
+          "timeout": 6000000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        736,
+        192
+      ],
+      "id": "675439e2-023b-4cbd-8d07-2d9bdbf5f579",
+      "name": "HTTP Request1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const text = $json.content.parts[0].text;\n\nconst plan = JSON.parse(text);\n\nreturn [\n  {\n    json: plan\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        544,
+        192
+      ],
+      "id": "2d198ef5-7021-4648-a003-e4309d6654c0",
+      "name": "Parse search plan"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Execute a SQL query": {
+      "main": [
+        []
+      ]
+    },
+    "On form submission": {
+      "main": [
+        [
+          {
+            "node": "Run Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model1": {
+      "main": [
+        []
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        []
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [
+          {
+            "node": "Limit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Pack 50 items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model3": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pack 50 items": {
+      "main": [
+        [
+          {
+            "node": "Message a model3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript2": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Append row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append row in sheet": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Limit": {
+      "main": [
+        []
+      ]
+    },
+    "Create spreadsheet": {
+      "main": [
+        [
+          {
+            "node": "Move file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Move file": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Location folder": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If1": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Location folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Location": {
+      "main": [
+        [
+          {
+            "node": "If1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Industry Folder": {
+      "main": [
+        []
+      ]
+    },
+    "If2": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Create Industry Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Industry Folder": {
+      "main": [
+        []
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Search Industry Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields1": {
+      "main": [
+        [
+          {
+            "node": "Search Industry Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Context": {
+      "main": [
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model": {
+      "main": [
+        [
+          {
+            "node": "Parse search plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse search plan": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request1": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "f0070165-656d-4090-a23f-c224b0c791f0",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "4c216138c329589b75cd6fa8f22fb73fbe2333bd7d3cf5f0a58776b200d7c28c"
+  },
+  "nodeGroups": [],
+  "id": "LIWmSjEFABGDfYVe",
+  "tags": []
+}
